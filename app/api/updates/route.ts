@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
       url: request.url,
       queryParams: Object.fromEntries(searchParams.entries()),
     });
+
     // Validate parameters
     if (!runtimeVersion || !platform) {
       return NextResponse.json(
@@ -86,6 +87,15 @@ export async function GET(request: NextRequest) {
 
     // Ensure manifest has launchAsset (for backwards compatibility with old manifests)
     let manifest = updateData.manifest;
+
+    // Convert createdAt from timestamp to ISO string if needed
+    if (typeof manifest.createdAt === 'number') {
+      manifest = {
+        ...manifest,
+        createdAt: new Date(manifest.createdAt).toISOString(),
+      };
+    }
+
     if (!manifest.launchAsset && manifest.assets && manifest.assets.length > 0) {
       // Find bundle asset (key === 'bundle')
       const bundleAsset = manifest.assets.find((asset: any) => asset.key === 'bundle');
@@ -97,27 +107,32 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Log the response structure for debugging
-
+    // Build response with createdAt as ISO string in both places
+    const createdAtISO = typeof manifest.createdAt === 'string' 
+      ? manifest.createdAt 
+      : new Date(manifest.createdAt).toISOString();
 
     const response = {
       update: {
         id: updateData.id,
-        createdAt: new Date(manifest.createdAt).toISOString(), // Convert timestamp to ISO string
+        createdAt: createdAtISO, // ISO string format
         runtimeVersion: updateData.runtimeVersion,
-        manifest: {
-          ...manifest,
-          createdAt: new Date(manifest.createdAt).toISOString(), // Also update in manifest
-        },
+        manifest: manifest, // manifest already has createdAt as ISO string
       },
     };
-    // ADD THIS: Log the full manifest structure
-console.log('📤 Full manifest structure:', JSON.stringify(manifest, null, 2));
-console.log('📤 Manifest keys:', Object.keys(manifest));
-console.log('📤 Has launchAsset?', !!manifest.launchAsset);
-console.log('📤 Has assets?', Array.isArray(manifest.assets));
-console.log('📤 Assets count:', manifest.assets?.length || 0);
-    
+
+    // Log the response structure for debugging
+    console.log('📤 Full manifest structure:', JSON.stringify(manifest, null, 2));
+    console.log('📤 Manifest keys:', Object.keys(manifest));
+    console.log('📤 Has launchAsset?', !!manifest.launchAsset);
+    console.log('📤 Has assets?', Array.isArray(manifest.assets));
+    console.log('📤 Assets count:', manifest.assets?.length || 0);
+    console.log('📤 createdAt format check:', {
+      updateCreatedAt: typeof response.update.createdAt,
+      manifestCreatedAt: typeof response.update.manifest.createdAt,
+      updateCreatedAtValue: response.update.createdAt,
+      manifestCreatedAtValue: response.update.manifest.createdAt,
+    });
     console.log('📤 Returning update response:', JSON.stringify(response, null, 2));
 
     // Return update manifest in Expo's expected format
@@ -130,4 +145,3 @@ console.log('📤 Assets count:', manifest.assets?.length || 0);
     );
   }
 }
-
