@@ -7,14 +7,9 @@ export async function GET(request: NextRequest) {
     // Connect to MongoDB
     await connectDB();
 
-    // Get query parameters
-    console.log('🔍 Request url:', request.url);
-    console.log('🔍 Request:', request);
-
     const searchParams = request.nextUrl.searchParams;
     
     // Expo Updates sends these as HEADERS, not query params!
-    // Read from headers first, then fallback to query params
     const runtimeVersion = request.headers.get('expo-runtime-version')
       || searchParams.get('runtimeVersion')
       || request.headers.get('expo-current-update-id');
@@ -33,7 +28,6 @@ export async function GET(request: NextRequest) {
       platform,
       channel,
       url: request.url,
-      queryParams: Object.fromEntries(searchParams.entries()),
     });
 
     // Validate parameters
@@ -63,16 +57,6 @@ export async function GET(request: NextRequest) {
 
     if (!update) {
       console.log('❌ No update found for:', { runtimeVersion, platform, channel });
-      // Also check what updates exist in the database for debugging
-      const availableUpdates = await Update.find({
-        platform,
-        status: 'published',
-      })
-        .select('id runtimeVersion channel platform publishedAt')
-        .sort({ publishedAt: -1 })
-        .limit(5)
-        .lean() as any[];
-      console.log('📋 Available updates in database:', JSON.stringify(availableUpdates, null, 2));
       return NextResponse.json({ update: null });
     }
 
@@ -82,52 +66,44 @@ export async function GET(request: NextRequest) {
       runtimeVersion: updateData.runtimeVersion,
       platform: updateData.platform,
       channel: updateData.channel,
-      publishedAt: updateData.publishedAt,
     });
 
-    // Ensure manifest has launchAsset (for backwards compatibility with old manifests)
+    // Get manifest and ensure createdAt is ISO string
     let manifest = updateData.manifest;
-
+    
     // Convert createdAt from timestamp to ISO string if needed
     if (typeof manifest.createdAt === 'number') {
-      manifest = {
-        ...manifest,
-        createdAt: new Date(manifest.createdAt).toISOString(),
-      };
+      manifest.createdAt = new Date(manifest.createdAt).toISOString();
+    } else if (manifest.createdAt instanceof Date) {
+      manifest.createdAt = manifest.createdAt.toISOString();
     }
 
+    // Ensure manifest has launchAsset
     if (!manifest.launchAsset && manifest.assets && manifest.assets.length > 0) {
-      // Find bundle asset (key === 'bundle')
-      const bundleAsset = manifest.assets.find((asset: any) => asset.key === 'bundle');
-      if (bundleAsset) {
-        manifest = {
-          ...manifest,
-          launchAsset: bundleAsset,
-        };
-      }
+      manifest.launchAsset = manifest.assets.find((asset: any) => asset.key === 'bundle') || manifest.assets[0];
     }
 
-    // Build response - Return manifest directly as update (Expo expects this structure)
+    // Return in Expo's expected format: manifest nested inside update
     const response = {
-      update: manifest, // Manifest is the update object itself
+      update: {
+        id: updateData.id,
+        createdAt: typeof updateData.publishedAt === 'number' 
+          ? new Date(updateData.publishedAt).toISOString()
+          : updateData.publishedAt instanceof Date
+          ? updateData.publishedAt.toISOString()
+          : updateData.publishedAt,
+        runtimeVersion: updateData.runtimeVersion,
+        manifest: manifest, // ✅ Manifest nested inside update
+      },
     };
 
-    // Log the response structure for debugging
-    console.log('📤 Full manifest structure:', JSON.stringify(manifest, null, 2));
-    console.log('📤 Manifest keys:', Object.keys(manifest));
-    console.log('📤 Has launchAsset?', !!manifest.launchAsset);
-    console.log('📤 Has assets?', Array.isArray(manifest.assets));
-    console.log('📤 Assets count:', manifest.assets?.length || 0);
-    console.log('📤 createdAt format check:', {
-      manifestCreatedAt: typeof manifest.createdAt,
-      manifestCreatedAtValue: manifest.createdAt,
-    });
-    console.log('📤 Returning update response:', JSON.stringify(response, null, 2));
+    console.log('📤 Returning update response with nested manifest');
 
-    // Return update manifest in Expo's expected format with proper Content-Type
     return NextResponse.json(response, {
       headers: {
         'Content-Type': 'application/json',
+        'expo-protocol-version': '1',
+        'expo-sfv-version': '0',
       },
     });
   } catch (error) {
