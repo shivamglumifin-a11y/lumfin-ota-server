@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import connectDB from '@/lib/db';
 import { Update } from '@/models/Update';
+
+function isValidUUID(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -8,7 +15,7 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
 
-    // Expo sends these primarily as HEADERS
+    // Expo headers (preferred)
     const runtimeVersion =
       request.headers.get('expo-runtime-version') ||
       searchParams.get('runtimeVersion');
@@ -34,7 +41,7 @@ export async function GET(request: NextRequest) {
       channel,
     });
 
-    // Validation
+    // ---------------- VALIDATION ----------------
     if (!runtimeVersion || !platform) {
       return NextResponse.json(
         { error: 'Missing runtimeVersion or platform' },
@@ -49,7 +56,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Fetch latest published update
+    // ---------------- FETCH UPDATE ----------------
     const update = await Update.findOne({
       runtimeVersion,
       platform,
@@ -70,20 +77,34 @@ export async function GET(request: NextRequest) {
 
     const updateData = update as any;
 
-    // ---- BUILD MANIFEST (ROOT LEVEL) ----
+    // ---------------- BUILD MANIFEST (ROOT LEVEL) ----------------
     const manifest = { ...updateData.manifest };
 
-    // REQUIRED FIELDS
-    manifest.id = updateData.id;
+    /**
+     * REQUIRED: id (MUST be UUID)
+     * Expo parses this using UUID.fromString() on Android
+     */
+    manifest.id =
+      typeof updateData.id === 'string' && isValidUUID(updateData.id)
+        ? updateData.id
+        : randomUUID();
 
+    /**
+     * REQUIRED: createdAt (ISO string)
+     */
     manifest.createdAt =
       updateData.publishedAt instanceof Date
         ? updateData.publishedAt.toISOString()
         : new Date(updateData.publishedAt).toISOString();
 
+    /**
+     * REQUIRED: runtimeVersion
+     */
     manifest.runtimeVersion = updateData.runtimeVersion;
 
-    // REQUIRED: launchAsset
+    /**
+     * REQUIRED: launchAsset
+     */
     if (!manifest.launchAsset && Array.isArray(manifest.assets)) {
       manifest.launchAsset =
         manifest.assets.find((a: any) => a.key === 'bundle') ||
@@ -91,21 +112,26 @@ export async function GET(request: NextRequest) {
     }
 
     if (!manifest.launchAsset) {
-      console.error('❌ Missing launchAsset in manifest');
+      console.error('❌ Invalid manifest: missing launchAsset');
       return NextResponse.json(
         { error: 'Invalid manifest: missing launchAsset' },
         { status: 500 }
       );
     }
 
-    console.log('📦 Returning manifest:', {
+    // Optional but recommended
+    manifest.metadata ??= {};
+    manifest.extra ??= {};
+
+    console.log('📦 Returning Expo manifest:', {
       id: manifest.id,
       runtimeVersion: manifest.runtimeVersion,
       platform,
       channel,
     });
 
-    // 🚀 IMPORTANT: return MANIFEST DIRECTLY
+    // ---------------- RESPONSE ----------------
+    // IMPORTANT: Return MANIFEST DIRECTLY (not nested)
     return NextResponse.json(manifest, {
       headers: {
         'Content-Type': 'application/json',
