@@ -107,18 +107,9 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Build response with createdAt as ISO string in both places
-    const createdAtISO = typeof manifest.createdAt === 'string' 
-      ? manifest.createdAt 
-      : new Date(manifest.createdAt).toISOString();
-
+    // Build response - Return manifest directly as update (Expo expects this structure)
     const response = {
-      update: {
-        id: updateData.id,
-        createdAt: createdAtISO, // ISO string format
-        runtimeVersion: updateData.runtimeVersion,
-        manifest: manifest, // manifest already has createdAt as ISO string
-      },
+      update: manifest, // Manifest is the update object itself
     };
 
     // Log the response structure for debugging
@@ -128,15 +119,17 @@ export async function GET(request: NextRequest) {
     console.log('📤 Has assets?', Array.isArray(manifest.assets));
     console.log('📤 Assets count:', manifest.assets?.length || 0);
     console.log('📤 createdAt format check:', {
-      updateCreatedAt: typeof response.update.createdAt,
-      manifestCreatedAt: typeof response.update.manifest.createdAt,
-      updateCreatedAtValue: response.update.createdAt,
-      manifestCreatedAtValue: response.update.manifest.createdAt,
+      manifestCreatedAt: typeof manifest.createdAt,
+      manifestCreatedAtValue: manifest.createdAt,
     });
     console.log('📤 Returning update response:', JSON.stringify(response, null, 2));
 
-    // Return update manifest in Expo's expected format
-    return NextResponse.json(response);
+    // Return update manifest in Expo's expected format with proper Content-Type
+    return NextResponse.json(response, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
   } catch (error) {
     console.error('❌ Error fetching update:', error);
     return NextResponse.json(
