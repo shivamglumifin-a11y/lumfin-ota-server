@@ -12,21 +12,29 @@ export async function GET(request: NextRequest) {
     console.log('🔍 Request:', request);
 
     const searchParams = request.nextUrl.searchParams;
-    const runtimeVersion = searchParams.get('runtimeVersion');
-    const platform = searchParams.get('platform');
-    // Try to get channel from query, header, or default to production
-    const channel = searchParams.get('channel') 
-      || request.headers.get('expo-channel-name')
+    
+    // Expo Updates sends these as HEADERS, not query params!
+    // Read from headers first, then fallback to query params
+    const runtimeVersion = request.headers.get('expo-runtime-version')
+      || searchParams.get('runtimeVersion')
+      || request.headers.get('expo-current-update-id');
+      
+    const platform = request.headers.get('expo-platform')
+      || searchParams.get('platform')
+      || (request.headers.get('user-agent')?.toLowerCase().includes('android') ? 'android' : null)
+      || (request.headers.get('user-agent')?.toLowerCase().includes('ios') ? 'ios' : null);
+      
+    const channel = request.headers.get('expo-channel-name')
+      || searchParams.get('channel')
       || 'production';
 
-    // Log the request for debugging
     console.log('📱 Update check request:', {
       runtimeVersion,
       platform,
       channel,
       url: request.url,
+      queryParams: Object.fromEntries(searchParams.entries()),
     });
-
     // Validate parameters
     if (!runtimeVersion || !platform) {
       return NextResponse.json(
