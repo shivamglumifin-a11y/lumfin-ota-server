@@ -106,6 +106,12 @@ export async function GET(request: NextRequest) {
         manifest: manifest,
       },
     };
+    // ADD THIS: Log the full manifest structure
+console.log('📤 Full manifest structure:', JSON.stringify(manifest, null, 2));
+console.log('📤 Manifest keys:', Object.keys(manifest));
+console.log('📤 Has launchAsset?', !!manifest.launchAsset);
+console.log('📤 Has assets?', Array.isArray(manifest.assets));
+console.log('📤 Assets count:', manifest.assets?.length || 0);
     
     console.log('📤 Returning update response:', JSON.stringify(response, null, 2));
 
