@@ -8,7 +8,7 @@ export async function uploadToVercelBlob(
   fileName: string
 ): Promise<string> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    throw new Error('BLOB_READ_WRITE_TOKEN is not set in .env.local');
+    throw new Error('BLOB_READ_WRITE_TOKEN is not set in environment variables');
   }
 
   // Use Readable stream for Vercel Blob Storage
