@@ -11,9 +11,10 @@ export async function uploadToVercelBlob(
     throw new Error('BLOB_READ_WRITE_TOKEN is not set in .env.local');
   }
 
-  const fileContent = fs.readFileSync(filePath);
+  // Use Readable stream for Vercel Blob Storage
+  const fileStream = fs.createReadStream(filePath);
   
-  const blob = await put(fileName, fileContent, {
+  const blob = await put(fileName, fileStream, {
     access: 'public',
     addRandomSuffix: false,
   });
