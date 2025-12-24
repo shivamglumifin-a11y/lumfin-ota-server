@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
 import connectDB from '@/lib/db';
 import { Update } from '@/models/Update';
-
-function isValidUUID(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,7 +8,6 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
 
-    // Expo headers (preferred)
     const runtimeVersion =
       request.headers.get('expo-runtime-version') ||
       searchParams.get('runtimeVersion');
@@ -25,8 +17,7 @@ export async function GET(request: NextRequest) {
       searchParams.get('platform') ||
       (request.headers.get('user-agent')?.toLowerCase().includes('android')
         ? 'android'
-        : null) ||
-      (request.headers.get('user-agent')?.toLowerCase().includes('ios')
+        : request.headers.get('user-agent')?.toLowerCase().includes('ios')
         ? 'ios'
         : null);
 
@@ -41,7 +32,6 @@ export async function GET(request: NextRequest) {
       channel,
     });
 
-    // ---------------- VALIDATION ----------------
     if (!runtimeVersion || !platform) {
       return NextResponse.json(
         { error: 'Missing runtimeVersion or platform' },
@@ -56,7 +46,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // ---------------- FETCH UPDATE ----------------
     const update = await Update.findOne({
       runtimeVersion,
       platform,
@@ -67,76 +56,55 @@ export async function GET(request: NextRequest) {
       .lean();
 
     if (!update) {
-      console.log('❌ No update found');
-      return NextResponse.json(null, {
+      return new NextResponse(null, {
         headers: {
           'expo-protocol-version': '1',
         },
       });
     }
 
-    const updateData = update as any;
+    const manifest = structuredClone(update.manifest);
 
-    // ---------------- BUILD MANIFEST (ROOT LEVEL) ----------------
-    const manifest = { ...updateData.manifest };
+    // REQUIRED FIELDS
+    manifest.id = update.id;
+    manifest.runtimeVersion = update.runtimeVersion;
+    manifest.createdAt = new Date(update.publishedAt).toISOString();
 
-    /**
-     * REQUIRED: id (MUST be UUID)
-     * Expo parses this using UUID.fromString() on Android
-     */
-    manifest.id =
-      typeof updateData.id === 'string' && isValidUUID(updateData.id)
-        ? updateData.id
-        : randomUUID();
-
-    /**
-     * REQUIRED: createdAt (ISO string)
-     */
-    manifest.createdAt =
-      updateData.publishedAt instanceof Date
-        ? updateData.publishedAt.toISOString()
-        : new Date(updateData.publishedAt).toISOString();
-
-    /**
-     * REQUIRED: runtimeVersion
-     */
-    manifest.runtimeVersion = updateData.runtimeVersion;
-
-    /**
-     * REQUIRED: launchAsset
-     */
-    if (!manifest.launchAsset && Array.isArray(manifest.assets)) {
-      manifest.launchAsset =
-        manifest.assets.find((a: any) => a.key === 'bundle') ||
-        manifest.assets[0];
-    }
-
-    if (!manifest.launchAsset) {
-      console.error('❌ Invalid manifest: missing launchAsset');
+    // Ensure assets array exists
+    if (!Array.isArray(manifest.assets)) {
       return NextResponse.json(
-        { error: 'Invalid manifest: missing launchAsset' },
+        { error: 'Invalid manifest: assets missing' },
         { status: 500 }
       );
     }
 
-    // Optional but recommended
-    manifest.metadata ??= {};
-    manifest.extra ??= {};
+    // Ensure launchAsset
+    manifest.launchAsset =
+      manifest.launchAsset ||
+      manifest.assets.find((a: any) => a.key === 'bundle');
 
-    console.log('📦 Returning Expo manifest:', {
+    if (!manifest.launchAsset) {
+      return NextResponse.json(
+        { error: 'Invalid manifest: launchAsset missing' },
+        { status: 500 }
+      );
+    }
+
+    // 🚨 HARD REQUIREMENTS
+    manifest.launchAsset.contentType = 'application/octet-stream';
+
+    console.log('📦 Returning update:', {
       id: manifest.id,
-      runtimeVersion: manifest.runtimeVersion,
-      platform,
-      channel,
+      bundle: manifest.launchAsset.url,
+      hash: manifest.launchAsset.hash,
     });
 
-    // ---------------- RESPONSE ----------------
-    // IMPORTANT: Return MANIFEST DIRECTLY (not nested)
     return NextResponse.json(manifest, {
       headers: {
         'Content-Type': 'application/json',
         'expo-protocol-version': '1',
         'expo-sfv-version': '0',
+        'Cache-Control': 'private, max-age=0',
       },
     });
   } catch (error) {

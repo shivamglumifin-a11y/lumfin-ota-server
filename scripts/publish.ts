@@ -8,7 +8,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import mongoose from 'mongoose';
-import { uploadToVercelBlob, calculateHash, getContentType } from '../lib/storage';
+import { uploadToVercelBlob, calculateHash, getContentType, verifyHashFromUrl } from '../lib/storage';
 
 // Modules that depend on env vars will be imported dynamically after env is loaded
 
@@ -108,22 +108,68 @@ async function publishUpdate(options: PublishOptions) {
   
   console.log(`📦 Found bundle at: ${bundlePath}`);
 
-  // Read bundle (handle both text .js and binary .hbc files)
+  // CRITICAL: For Android, we MUST hash the actual .hbc file bytes
+  // Do NOT hash JS, zip, or pre-Hermes output
   const isBinary = bundlePath.endsWith('.hbc');
-  const bundleContent = isBinary 
-    ? fs.readFileSync(bundlePath) 
-    : fs.readFileSync(bundlePath, 'utf-8');
-  const bundleHash = calculateHash(bundleContent);
+  
+  if (platform === 'android' && !isBinary) {
+    throw new Error(
+      `❌ Android requires .hbc (Hermes bytecode) file, but found: ${bundlePath}\n` +
+      `   Android OTA updates MUST use Hermes bytecode (.hbc) files.\n` +
+      `   Ensure your Expo build is configured for Hermes bytecode.`
+    );
+  }
 
-  // Step 6: Upload bundle
+  // Read bundle as Buffer (binary) for accurate hashing
+  // This ensures we hash the EXACT bytes that will be served
+  const bundleContent = fs.readFileSync(bundlePath);
+  const bundleHash = calculateHash(bundleContent);
+  
+  console.log(`🔐 Calculated hash: sha256:${bundleHash}`);
+  console.log(`   File size: ${bundleContent.length} bytes`);
+  console.log(`   File type: ${isBinary ? 'Hermes bytecode (.hbc)' : 'JavaScript (.js)'}`);
+
+  // Step 6: Upload bundle with correct content type and no compression
   console.log('☁️ Uploading bundle...');
   const updateId = generateUpdateId();
   const bundleExtension = bundlePath.split('.').pop() || 'js';
+  
+  // CRITICAL: For .hbc files, set Content-Type and ensure no compression
+  const contentType = isBinary ? 'application/octet-stream' : 'application/javascript';
+  
   const bundleUrl = await uploadToVercelBlob(
     bundlePath,
-    `updates/${updateId}/bundle.${bundleExtension}`
+    `updates/${updateId}/bundle.${bundleExtension}`,
+    {
+      contentType: contentType,
+      contentEncoding: isBinary ? 'identity' : undefined, // Explicitly disable compression for .hbc
+    }
   );
   console.log(`✅ Bundle uploaded: ${bundleUrl}`);
+
+  // CRITICAL: Verify hash matches what's actually served (catches compression issues)
+  if (isBinary) {
+    console.log('🔍 Verifying hash of served file...');
+    const verification = await verifyHashFromUrl(bundleUrl, bundleHash);
+    
+    if (!verification.matches) {
+      console.error('\n❌ HASH VERIFICATION FAILED!');
+      console.error(`   Expected: sha256:${bundleHash}`);
+      console.error(`   Actual:   sha256:${verification.actualHash}`);
+      if (verification.error) {
+        console.error(`   Error: ${verification.error}`);
+      }
+      console.error('\n⚠️  This update will FAIL on Android!');
+      console.error('   The file is being compressed by CDN.');
+      console.error('   Verify headers:');
+      console.error(`   curl -I ${bundleUrl}`);
+      console.error('   Expected: Content-Encoding: identity (or missing)');
+      console.error('   If Content-Encoding is gzip/br, you need to disable compression.');
+      throw new Error('Hash verification failed - CDN compression detected');
+    } else {
+      console.log(`✅ Hash verification passed: sha256:${verification.actualHash}`);
+    }
+  }
 
   // Step 7: Upload assets
   console.log('📎 Uploading assets...');
@@ -157,10 +203,11 @@ async function publishUpdate(options: PublishOptions) {
   }
 
   // Step 8: Create manifest in Expo's expected format
+  // CRITICAL: Hash must match EXACT bytes served (no compression)
   const bundleAsset = {
     hash: `sha256:${bundleHash}`,
     key: 'bundle',
-    contentType: isBinary ? 'application/octet-stream' : 'application/javascript',
+    contentType: 'application/octet-stream', // Expo requires this for Android
     url: bundleUrl,
   };
 
