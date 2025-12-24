@@ -98,12 +98,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Log the response structure for debugging
+
+
     const response = {
       update: {
         id: updateData.id,
-        createdAt: updateData.manifest.createdAt,
+        createdAt: new Date(manifest.createdAt).toISOString(), // Convert timestamp to ISO string
         runtimeVersion: updateData.runtimeVersion,
-        manifest: manifest,
+        manifest: {
+          ...manifest,
+          createdAt: new Date(manifest.createdAt).toISOString(), // Also update in manifest
+        },
       },
     };
     // ADD THIS: Log the full manifest structure
