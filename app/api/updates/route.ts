@@ -8,6 +8,9 @@ export async function GET(request: NextRequest) {
     await connectDB();
 
     // Get query parameters
+    console.log('🔍 Request url:', request.url);
+    console.log('🔍 Request:', request);
+
     const searchParams = request.nextUrl.searchParams;
     const runtimeVersion = searchParams.get('runtimeVersion');
     const platform = searchParams.get('platform');
