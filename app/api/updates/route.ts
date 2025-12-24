@@ -84,15 +84,33 @@ export async function GET(request: NextRequest) {
       publishedAt: updateData.publishedAt,
     });
 
-    // Return update manifest in Expo's expected format
-    return NextResponse.json({
+    // Ensure manifest has launchAsset (for backwards compatibility with old manifests)
+    let manifest = updateData.manifest;
+    if (!manifest.launchAsset && manifest.assets && manifest.assets.length > 0) {
+      // Find bundle asset (key === 'bundle')
+      const bundleAsset = manifest.assets.find((asset: any) => asset.key === 'bundle');
+      if (bundleAsset) {
+        manifest = {
+          ...manifest,
+          launchAsset: bundleAsset,
+        };
+      }
+    }
+
+    // Log the response structure for debugging
+    const response = {
       update: {
         id: updateData.id,
         createdAt: updateData.manifest.createdAt,
         runtimeVersion: updateData.runtimeVersion,
-        manifest: updateData.manifest,
+        manifest: manifest,
       },
-    });
+    };
+    
+    console.log('📤 Returning update response:', JSON.stringify(response, null, 2));
+
+    // Return update manifest in Expo's expected format
+    return NextResponse.json(response);
   } catch (error) {
     console.error('❌ Error fetching update:', error);
     return NextResponse.json(

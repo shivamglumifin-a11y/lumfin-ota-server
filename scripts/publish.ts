@@ -156,18 +156,21 @@ async function publishUpdate(options: PublishOptions) {
     console.log(`✅ Uploaded ${assets.length} assets`);
   }
 
-  // Step 8: Create manifest
+  // Step 8: Create manifest in Expo's expected format
+  const bundleAsset = {
+    hash: `sha256:${bundleHash}`,
+    key: 'bundle',
+    contentType: isBinary ? 'application/octet-stream' : 'application/javascript',
+    url: bundleUrl,
+  };
+
   const manifest = {
     id: updateId,
     createdAt: Date.now(),
     runtimeVersion: runtimeVersion,
+    launchAsset: bundleAsset, // Expo requires launchAsset field
     assets: [
-      {
-        hash: `sha256:${bundleHash}`,
-        key: 'bundle',
-        contentType: isBinary ? 'application/octet-stream' : 'application/javascript',
-        url: bundleUrl,
-      },
+      bundleAsset, // Bundle should also be in assets array
       ...assets,
     ],
   };
