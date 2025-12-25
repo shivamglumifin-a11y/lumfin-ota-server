@@ -18,6 +18,7 @@ interface IManifest {
 }
 
 interface IUpdate extends mongoose.Document {
+  id: string;                 // UUID for the update (immutable)
   runtimeVersion: string;
   platform: 'ios' | 'android';
   channel: 'development' | 'staging' | 'production';

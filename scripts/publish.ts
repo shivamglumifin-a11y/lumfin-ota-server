@@ -135,21 +135,21 @@ async function publishUpdate(options: PublishOptions) {
   console.log(`   File size: ${bundleContent.length} bytes`);
   console.log(`   File type: ${isBinary ? 'Hermes bytecode (.hbc)' : 'JavaScript (.js)'}`);
 
-  // Step 6: Upload bundle with correct content type and no compression
-  console.log('☁️ Uploading bundle...');
+  // Step 6: Generate unique updateId (UUID) for this update
+  // CRITICAL: This UUID ensures immutable, unique paths for all assets
   const updateId = generateUpdateId();
+  console.log(`🆔 Update ID: ${updateId}`);
+  
+  // Step 7: Upload bundle with immutable path using updateId
+  console.log('☁️ Uploading bundle...');
   const bundleExtension = bundlePath.split('.').pop() || 'js';
   
-  // CRITICAL: For .hbc files, set Content-Type and ensure no compression
-  const contentType = isBinary ? 'application/octet-stream' : 'application/javascript';
-  
+  // CRITICAL: uploadToVercelBlob now enforces immutable paths via updateId
+  // For .hbc files, contentType is automatically set to application/octet-stream
   const bundleUrl = await uploadToVercelBlob(
     bundlePath,
-    `updates/${updateId}/bundle.${bundleExtension}`,
-    {
-      contentType: contentType,
-      contentEncoding: isBinary ? 'identity' : undefined, // Explicitly disable compression for .hbc
-    }
+    updateId,
+    `bundle.${bundleExtension}`
   );
   console.log(`✅ Bundle uploaded: ${bundleUrl}`);
 
@@ -177,7 +177,7 @@ async function publishUpdate(options: PublishOptions) {
     }
   }
 
-  // Step 7: Upload assets
+  // Step 8: Upload assets with immutable paths using updateId
   console.log('📎 Uploading assets...');
   // Modern Expo exports assets to _expo/static/assets/, fallback to assets/
   const modernAssetsDir = path.join(outputDir, '_expo', 'static', 'assets');
@@ -193,9 +193,12 @@ async function publishUpdate(options: PublishOptions) {
       const assetContent = fs.readFileSync(assetFile);
       const assetHash = calculateHash(assetContent);
       
+      // CRITICAL: Use updateId to ensure immutable, unique paths
+      // Path format: updates/{updateId}/assets/{relativePath}
       const assetUrl = await uploadToVercelBlob(
         assetFile,
-        `updates/${updateId}/assets/${relativePath.replace(/\\/g, '/')}`
+        updateId,
+        `assets/${relativePath.replace(/\\/g, '/')}`
       );
 
       assets.push({
@@ -208,12 +211,13 @@ async function publishUpdate(options: PublishOptions) {
     console.log(`✅ Uploaded ${assets.length} assets`);
   }
 
-  // Step 8: Create manifest in Expo's expected format
+  // Step 9: Create manifest in Expo's expected format
   // CRITICAL: Hash must match EXACT bytes served (no compression)
+  // CRITICAL: All asset URLs are now immutable (updateId in path ensures uniqueness)
   const bundleAsset = {
     hash: `sha256:${bundleHash}`,
     key: 'bundle',
-    contentType: 'application/octet-stream', // Expo requires this for Android
+    contentType: 'application/octet-stream', // Expo requires this for Android/Hermes
     url: bundleUrl,
   };
 
@@ -221,18 +225,26 @@ async function publishUpdate(options: PublishOptions) {
   // This becomes commit_time in Expo's SQLite database and must be globally unique per scope
   const commitTime = new Date();
 
+  // CRITICAL: Create fully Expo-compliant manifest
+  // - id: UUID (immutable identifier)
+  // - createdAt: ISO string (when update was published)
+  // - runtimeVersion: preserved from options
+  // - launchAsset: always present with contentType = application/octet-stream
+  // - assets: array including bundle and all other assets
   const manifest = {
-    id: updateId,
-    createdAt: commitTime.toISOString(), // Expo expects ISO string, not milliseconds
+    id: updateId, // UUID ensures uniqueness
+    createdAt: commitTime.toISOString(), // Expo expects ISO string
     runtimeVersion: runtimeVersion,
     launchAsset: bundleAsset, // Expo requires launchAsset field
     assets: [
-      bundleAsset, // Bundle should also be in assets array
+      bundleAsset, // Bundle must be in assets array
       ...assets,
     ],
+    metadata: {}, // Expo compatibility
+    extra: {}, // Expo compatibility
   };
 
-  // Step 9: Save to MongoDB
+  // Step 10: Save to MongoDB
   console.log('💾 Saving to database...');
   const update = new Update({
     id: updateId,

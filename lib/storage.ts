@@ -7,42 +7,69 @@ interface UploadOptions {
   contentEncoding?: string;
 }
 
-// Upload to Vercel Blob Storage
+/**
+ * Upload to Vercel Blob Storage with immutable, unique paths.
+ * 
+ * CRITICAL: Every file gets a unique path using updateId (UUID) to ensure:
+ * - No file is ever overwritten
+ * - Assets are immutable once published
+ * - Hash verification can never fail due to CDN caching or asset reuse
+ * 
+ * @param filePath - Local file path to upload
+ * @param updateId - UUID of the update (ensures unique, immutable paths)
+ * @param relativePath - Relative path within the update (e.g., 'bundle.js' or 'assets/image.png')
+ * @param options - Optional upload options
+ * @returns The public URL of the uploaded blob
+ */
 export async function uploadToVercelBlob(
   filePath: string,
-  fileName: string,
+  updateId: string,
+  relativePath: string,
   options?: UploadOptions
 ): Promise<string> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     throw new Error('BLOB_READ_WRITE_TOKEN is not set in environment variables');
   }
 
+  // Validate updateId is a UUID format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(updateId)) {
+    throw new Error(`Invalid updateId format. Expected UUID, got: ${updateId}`);
+  }
+
+  // Construct immutable path: updates/{updateId}/{relativePath}
+  // This ensures:
+  // 1. Each update gets its own namespace
+  // 2. No file can ever be overwritten (different updateId = different path)
+  // 3. Assets are immutable once published
+  const blobPath = `updates/${updateId}/${relativePath}`;
+
   // Use Readable stream for Vercel Blob Storage
   const fileStream = fs.createReadStream(filePath);
   
   // Determine content type
-  const contentType = options?.contentType || getContentType(filePath);
-  
-  // For .hbc files, we MUST disable compression to ensure hash matches
+  // CRITICAL: .hbc files MUST use application/octet-stream to prevent compression
   const isHbcFile = filePath.toLowerCase().endsWith('.hbc');
+  const contentType = isHbcFile 
+    ? 'application/octet-stream' 
+    : (options?.contentType || getContentType(filePath));
   
-  const blob = await put(fileName, fileStream, {
+  // Upload with immutable path (addRandomSuffix: false because updateId already ensures uniqueness)
+  const blob = await put(blobPath, fileStream, {
     access: 'public',
-    addRandomSuffix: false,
+    addRandomSuffix: false, // Path is already unique via updateId
     contentType: contentType,
     // Note: Vercel Blob/CDN typically does NOT compress application/octet-stream files
-    // Setting contentType to 'application/octet-stream' for .hbc files should prevent compression
+    // Setting contentType to 'application/octet-stream' for .hbc files prevents compression
   });
 
-  // CRITICAL: For .hbc files, we need to ensure Content-Encoding: identity
-  // Vercel Blob doesn't directly support setting Content-Encoding in put(),
-  // but we can verify the file after upload and warn if compression is detected
+  // Log verification info for .hbc files
   if (isHbcFile) {
-    console.log(`⚠️  IMPORTANT: Verify headers for .hbc file:`);
-    console.log(`   curl -I ${blob.url}`);
-    console.log(`   Expected: Content-Type: application/octet-stream`);
-    console.log(`   Expected: Content-Encoding: identity (or missing)`);
-    console.log(`   If Content-Encoding is gzip/br, hash verification will fail!`);
+    console.log(`✅ Uploaded Hermes bytecode (.hbc) file:`);
+    console.log(`   Path: ${blobPath}`);
+    console.log(`   URL: ${blob.url}`);
+    console.log(`   Content-Type: application/octet-stream`);
+    console.log(`   Verify headers: curl -I ${blob.url}`);
   }
 
   return blob.url;
