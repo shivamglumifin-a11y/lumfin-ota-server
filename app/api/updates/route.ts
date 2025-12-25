@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import connectDB from '@/lib/db';
 import { Update } from '@/models/Update';
+
+/**
+ * Expo Android strictly parses UUID using UUID.fromString()
+ */
+function isValidUUID(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
 
 interface UpdateLean {
   id: string;
@@ -9,9 +19,9 @@ interface UpdateLean {
   channel: 'development' | 'staging' | 'production';
   status: 'draft' | 'published' | 'rolled_back';
   manifest: {
-    id: string;
-    createdAt: number;
-    runtimeVersion: string;
+    id?: string;
+    createdAt?: number | string;
+    runtimeVersion?: string;
     assets: Array<{
       hash: string;
       key: string;
@@ -24,8 +34,9 @@ interface UpdateLean {
       contentType: string;
       url: string;
     };
+    metadata?: Record<string, any>;
+    extra?: Record<string, any>;
   };
-  message?: string;
   createdAt: Date;
   publishedAt?: Date;
 }
@@ -36,6 +47,7 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
 
+    // ---- Expo headers (preferred) ----
     const runtimeVersion =
       request.headers.get('expo-runtime-version') ||
       searchParams.get('runtimeVersion');
@@ -60,6 +72,7 @@ export async function GET(request: NextRequest) {
       channel,
     });
 
+    // ---- Validation ----
     if (!runtimeVersion || !platform) {
       return NextResponse.json(
         { error: 'Missing runtimeVersion or platform' },
@@ -74,14 +87,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const update = await Update.findOne({
+    // ---- Fetch latest published update ----
+    const update = (await Update.findOne({
       runtimeVersion,
       platform,
       channel,
       status: 'published',
     })
       .sort({ publishedAt: -1 })
-      .lean() as UpdateLean | null;
+      .lean()) as UpdateLean | null;
 
     if (!update) {
       return new NextResponse(null, {
@@ -91,28 +105,45 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // ---- Build manifest (ROOT LEVEL) ----
     const manifest = structuredClone(update.manifest);
 
-    // REQUIRED FIELDS
-    manifest.id = update.id;
-    manifest.runtimeVersion = update.runtimeVersion;
-    // createdAt should be timestamp (number), not ISO string
-    manifest.createdAt = update.publishedAt 
-      ? new Date(update.publishedAt).getTime() 
-      : new Date(update.createdAt).getTime();
+    /**
+     * REQUIRED: id (MUST be UUID)
+     */
+    manifest.id =
+      typeof update.id === 'string' && isValidUUID(update.id)
+        ? update.id
+        : randomUUID();
 
-    // Ensure assets array exists
-    if (!Array.isArray(manifest.assets)) {
+    /**
+     * REQUIRED: createdAt (ISO string – Expo compliant)
+     */
+    const createdAtDate =
+      update.publishedAt ?? update.createdAt ?? new Date();
+    manifest.createdAt = new Date(createdAtDate).toISOString();
+
+    /**
+     * REQUIRED: runtimeVersion
+     */
+    manifest.runtimeVersion = update.runtimeVersion;
+
+    /**
+     * REQUIRED: assets[]
+     */
+    if (!Array.isArray(manifest.assets) || manifest.assets.length === 0) {
       return NextResponse.json(
         { error: 'Invalid manifest: assets missing' },
         { status: 500 }
       );
     }
 
-    // Ensure launchAsset
+    /**
+     * REQUIRED: launchAsset
+     */
     manifest.launchAsset =
       manifest.launchAsset ||
-      manifest.assets.find((a: any) => a.key === 'bundle');
+      manifest.assets.find((a) => a.key === 'bundle');
 
     if (!manifest.launchAsset) {
       return NextResponse.json(
@@ -121,15 +152,22 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 🚨 HARD REQUIREMENTS
+    /**
+     * HARD REQUIREMENTS
+     */
     manifest.launchAsset.contentType = 'application/octet-stream';
+    manifest.metadata ??= {};
+    manifest.extra ??= {};
 
-    console.log('📦 Returning update:', {
+    console.log('📦 Returning Expo manifest:', {
       id: manifest.id,
+      runtimeVersion: manifest.runtimeVersion,
+      platform,
+      channel,
       bundle: manifest.launchAsset.url,
-      hash: manifest.launchAsset.hash,
     });
 
+    // ---- IMPORTANT: return manifest directly ----
     return NextResponse.json(manifest, {
       headers: {
         'Content-Type': 'application/json',
