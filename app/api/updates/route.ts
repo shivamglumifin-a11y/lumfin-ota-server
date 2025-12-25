@@ -2,6 +2,34 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import { Update } from '@/models/Update';
 
+interface UpdateLean {
+  id: string;
+  runtimeVersion: string;
+  platform: 'ios' | 'android';
+  channel: 'development' | 'staging' | 'production';
+  status: 'draft' | 'published' | 'rolled_back';
+  manifest: {
+    id: string;
+    createdAt: number;
+    runtimeVersion: string;
+    assets: Array<{
+      hash: string;
+      key: string;
+      contentType: string;
+      url: string;
+    }>;
+    launchAsset?: {
+      hash: string;
+      key: string;
+      contentType: string;
+      url: string;
+    };
+  };
+  message?: string;
+  createdAt: Date;
+  publishedAt?: Date;
+}
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -53,7 +81,7 @@ export async function GET(request: NextRequest) {
       status: 'published',
     })
       .sort({ publishedAt: -1 })
-      .lean();
+      .lean() as UpdateLean | null;
 
     if (!update) {
       return new NextResponse(null, {
@@ -68,7 +96,10 @@ export async function GET(request: NextRequest) {
     // REQUIRED FIELDS
     manifest.id = update.id;
     manifest.runtimeVersion = update.runtimeVersion;
-    manifest.createdAt = new Date(update.publishedAt).toISOString();
+    // createdAt should be timestamp (number), not ISO string
+    manifest.createdAt = update.publishedAt 
+      ? new Date(update.publishedAt).getTime() 
+      : new Date(update.createdAt).getTime();
 
     // Ensure assets array exists
     if (!Array.isArray(manifest.assets)) {
