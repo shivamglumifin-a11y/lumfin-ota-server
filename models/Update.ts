@@ -33,6 +33,7 @@ interface IUpdate extends mongoose.Document {
 
 const UpdateSchema = new mongoose.Schema(
   {
+    id: { type: String, required: true, unique: true }, // UUID for the update
     runtimeVersion: { type: String, required: true },
     platform: { type: String, enum: ['ios', 'android'], required: true },
     channel: {
