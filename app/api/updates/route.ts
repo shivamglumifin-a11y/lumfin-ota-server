@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
       channel,
       status: 'published',
     })
-      .sort({ publishedAt: -1 })
+      .sort({ commitTime: -1 }) // Use commitTime for sorting as it's more reliable
       .lean()) as UpdateLean | null;
 
     if (!update) {
