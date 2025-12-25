@@ -20,7 +20,13 @@ interface PublishOptions {
 }
 
 function generateUpdateId(): string {
-  return crypto.randomBytes(16).toString('hex');
+  // Generate a valid UUID v4 format that Expo expects
+  const bytes = crypto.randomBytes(16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // Version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // Variant 10
+
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 function getAllFiles(dirPath: string, arrayOfFiles: string[] = []): string[] {
@@ -211,9 +217,13 @@ async function publishUpdate(options: PublishOptions) {
     url: bundleUrl,
   };
 
+  // CRITICAL: commitTime must be unique per scope (runtimeVersion + platform + channel)
+  // This becomes commit_time in Expo's SQLite database and must be globally unique per scope
+  const commitTime = new Date();
+
   const manifest = {
     id: updateId,
-    createdAt: Date.now(),
+    createdAt: commitTime.toISOString(), // Expo expects ISO string, not milliseconds
     runtimeVersion: runtimeVersion,
     launchAsset: bundleAsset, // Expo requires launchAsset field
     assets: [
@@ -230,9 +240,10 @@ async function publishUpdate(options: PublishOptions) {
     platform: platform,
     channel: channel,
     status: 'published',
+    commitTime: commitTime, // CRITICAL: Must be set for Expo uniqueness constraint
     manifest: manifest,
     message: message,
-    publishedAt: new Date(),
+    publishedAt: commitTime, // Use same timestamp for consistency
   });
 
   await update.save();
